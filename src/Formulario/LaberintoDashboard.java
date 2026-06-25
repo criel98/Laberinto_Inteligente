@@ -1,11 +1,7 @@
 package Formulario;
 
 import javax.swing.*;
-import javax.swing.event.ChangeEvent;
-import javax.swing.event.ChangeListener;
 import java.awt.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 import com.fazecast.jSerialComm.SerialPort;
 import java.io.OutputStream;
 import java.io.InputStream;
@@ -18,6 +14,10 @@ public class LaberintoDashboard extends JFrame {
     
     private boolean isMuted = false;
     private int sonidoVolumen = 50;
+    
+    // Control dinámico de niveles del sistema integrado
+    private int nivelActual = 1;
+    private final int MAX_NIVELES = 3;
     
     // Variables de comunicación serie
     private SerialPort puertoSerie;
@@ -34,11 +34,11 @@ public class LaberintoDashboard extends JFrame {
         setLayout(new BorderLayout());
         setResizable(false);
         
-        panelLaberinto = new GamePanel();
-        add(panelLaberinto, BorderLayout.CENTER);
-        
         panelControl = new DashboardPanel();
         add(panelControl, BorderLayout.EAST);
+        
+        panelLaberinto = new GamePanel();
+        add(panelLaberinto, BorderLayout.CENTER);
         
         addWindowListener(new java.awt.event.WindowAdapter() {
             @Override
@@ -48,23 +48,22 @@ public class LaberintoDashboard extends JFrame {
         });
     }
     
-    // ----- Conexión Dinámica con Arduino (VERSIÓN DEFINITIVA) -----
+    // ----- Conexión Dinámica con Arduino -----
     private void conectarArduino(String nombrePuerto) {
         try {
             puertoSerie = SerialPort.getCommPort(nombrePuerto);
             puertoSerie.setComPortParameters(115200, 8, 1, 0);
-            
-            // Configurar el timeout para que el Scanner escuche correctamente
             puertoSerie.setComPortTimeouts(SerialPort.TIMEOUT_SCANNER, 0, 0);
             
             if (puertoSerie.openPort()) {
-                
-                // Pausa obligatoria de 1.5 segundos. Arduino se reinicia al abrir el puerto.
-                Thread.sleep(1500); 
+                Thread.sleep(1500); // Esperar reinicio del Arduino
                 
                 salidaSerie = puertoSerie.getOutputStream();
                 entradaSerie = puertoSerie.getInputStream();
                 scannerSerie = new Scanner(entradaSerie);
+                
+                // Sincronizar hardware inmediatamente al conectar
+                enviarArduino((char)('0' + nivelActual));
                 
                 receptorThread = new Thread(() -> {
                     while (puertoSerie != null && puertoSerie.isOpen() && scannerSerie != null) {
@@ -120,8 +119,20 @@ public class LaberintoDashboard extends JFrame {
         }
     }
     
-    // ----- Procesar mensajes del Arduino -----
     private void procesarMensajeArduino(String mensaje) {
+        // Cierre remoto del JDialog usando el botón del joystick
+        if (mensaje.equals("BOTON")) {
+            for (Window window : Window.getWindows()) {
+                if (window instanceof JDialog) {
+                    JDialog dialog = (JDialog) window;
+                    if (dialog.isVisible()) {
+                        dialog.dispose(); // Destruye la ventana de diálogo activa
+                    }
+                }
+            }
+            return;
+        }
+        
         switch (mensaje) {
             case "ARRIBA":    panelControl.actualizarJoystick(512, 1023); break;
             case "ABAJO":     panelControl.actualizarJoystick(512, 0);    break;
@@ -144,31 +155,92 @@ public class LaberintoDashboard extends JFrame {
         }
     }
     
-    // ----- Panel del Laberinto -----
+    // ----- Panel del Laberinto Dinámico -----
     class GamePanel extends JPanel {
         private static final int TAMANO_CELDA = 40;
-        private int[][] laberinto = {
-            {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
-            {1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1},
-            {1, 0, 1, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1},
-            {1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1},
-            {1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1},
-            {1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1},
-            {1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1},
-            {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
-            {1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1},
-            {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
-            {1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 0, 1},
-            {1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 1},
-            {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
+        
+        private final int[][][] mapasNiveles = {
+            // NIVEL 1 Rediseñado (Complejo con caminos ciegos)
+            {
+                {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+                {1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1},
+                {1, 0, 1, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1},
+                {1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1},
+                {1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1},
+                {1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1},
+                {1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1},
+                {1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1},
+                {1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1},
+                {1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1},
+                {1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1},
+                {1, 2, 1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1}, // Inicio en (1,11), Meta en (11,11)
+                {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
+            },
+            // NIVEL 2
+            {
+                {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+                {1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+                {1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1},
+                {1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1},
+                {1, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1},
+                {1, 0, 0, 0, 0, 0, 1, 3, 1, 0, 0, 0, 1}, 
+                {1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1},
+                {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1},
+                {1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 0, 1},
+                {1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1},
+                {1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1},
+                {1, 2, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1},
+                {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
+            },
+            // NIVEL 3
+            {
+                {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+                {1, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1},
+                {1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1},
+                {1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1},
+                {1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1},
+                {1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1},
+                {1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1},
+                {1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1},
+                {1, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1},
+                {1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1},
+                {1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1},
+                {1, 3, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1},
+                {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
+            }
         };
         
-        private int jugadorX = 1;
-        private int jugadorY = 1;
+        private int[][] laberinto;
+        private int jugadorX;
+        private int jugadorY;
         
         public GamePanel() {
             setBackground(Color.BLACK);
             setPreferredSize(new Dimension(13 * TAMANO_CELDA, 13 * TAMANO_CELDA));
+            cargarMapaNivel(nivelActual);
+        }
+        
+        private void cargarMapaNivel(int nivel) {
+            int[][] mapaOriginal = mapasNiveles[nivel - 1];
+            laberinto = new int[mapaOriginal.length][mapaOriginal[0].length];
+            for (int i = 0; i < mapaOriginal.length; i++) {
+                System.arraycopy(mapaOriginal[i], 0, laberinto[i], 0, mapaOriginal[i].length);
+            }
+            
+            // ESCANEO DINÁMICO del bloque verde claro (2)
+            boolean encontrado = false;
+            for (int fila = 0; fila < laberinto.length; fila++) {
+                for (int col = 0; col < laberinto[fila].length; col++) {
+                    if (laberinto[fila][col] == 2) {
+                        jugadorX = col;
+                        jugadorY = fila;
+                        encontrado = true;
+                        break;
+                    }
+                }
+                if (encontrado) break;
+            }
+            if (!encontrado) { jugadorX = 1; jugadorY = 1; }
         }
         
         public void moverJugador(String direccion) {
@@ -191,11 +263,21 @@ public class LaberintoDashboard extends JFrame {
                 }
                 
                 if (laberinto[nuevoY][nuevoX] == 3) {
-                    JOptionPane.showMessageDialog(this, "¡GANASTE!", "Victoria", JOptionPane.INFORMATION_MESSAGE);
-                    enviarArduino('3'); 
-                    jugadorX = 1;
-                    jugadorY = 1;
-                    repaint();
+                    if (nivelActual < MAX_NIVELES) {
+                        JOptionPane.showMessageDialog(this, "¡GANASTE EL NIVEL " + nivelActual + "! Pasando al siguiente...", "Victoria", JOptionPane.INFORMATION_MESSAGE);
+                        nivelActual++;
+                        cargarMapaNivel(nivelActual);
+                        panelControl.actualizarNivelVisual(nivelActual);
+                        enviarArduino((char)('0' + nivelActual));
+                        repaint();
+                    } else {
+                        JOptionPane.showMessageDialog(this, "¡FELICIDADES! COMPLETASTE TODOS LOS NIVELES.", "Fin del Juego", JOptionPane.INFORMATION_MESSAGE);
+                        nivelActual = 1; 
+                        cargarMapaNivel(nivelActual);
+                        panelControl.actualizarNivelVisual(nivelActual);
+                        enviarArduino((char)('0' + nivelActual));
+                        repaint();
+                    }
                 }
             }
         }
@@ -213,10 +295,10 @@ public class LaberintoDashboard extends JFrame {
                         g.setColor(new Color(80, 80, 80));
                         g.fillRect(x, y, TAMANO_CELDA, TAMANO_CELDA);
                     } else if (celda == 2) {
-                        g.setColor(new Color(0, 100, 0));
+                        g.setColor(new Color(0, 100, 0)); 
                         g.fillRect(x, y, TAMANO_CELDA, TAMANO_CELDA);
                     } else if (celda == 3) {
-                        g.setColor(Color.YELLOW);
+                        g.setColor(Color.YELLOW); 
                         g.fillRect(x, y, TAMANO_CELDA, TAMANO_CELDA);
                     }
                 }
@@ -235,7 +317,7 @@ public class LaberintoDashboard extends JFrame {
         private VisualizadorJoystick visualizadorJoystick;
         private JLabel lblVolumenValor;
         private JLabel lblInfoConexion;
-        
+        private JLabel lblNivelContador; 
         private boolean conectado = false;
         
         public DashboardPanel() {
@@ -249,7 +331,25 @@ public class LaberintoDashboard extends JFrame {
             titulo.setForeground(Color.WHITE);
             titulo.setAlignmentX(Component.CENTER_ALIGNMENT);
             add(titulo);
+            add(Box.createVerticalStrut(10));
+            
+            JLabel lblNivelTitulo = new JLabel("NIVEL ACTUAL:");
+            lblNivelTitulo.setFont(new Font("Arial", Font.BOLD, 11));
+            lblNivelTitulo.setForeground(Color.LIGHT_GRAY);
+            lblNivelTitulo.setAlignmentX(Component.CENTER_ALIGNMENT);
+            add(lblNivelTitulo);
+            
+            lblNivelContador = new JLabel("NIVEL " + nivelActual);
+            lblNivelContador.setFont(new Font("Arial", Font.BOLD, 24));
+            lblNivelContador.setForeground(new Color(255, 204, 0)); 
+            lblNivelContador.setAlignmentX(Component.CENTER_ALIGNMENT);
+            add(lblNivelContador);
             add(Box.createVerticalStrut(15));
+            
+            JSeparator sepNivel = new JSeparator();
+            sepNivel.setMaximumSize(new Dimension(300, 10));
+            add(sepNivel);
+            add(Box.createVerticalStrut(10));
             
             JLabel lblSeleccionar = new JLabel("PUERTO ARDUINO:");
             lblSeleccionar.setFont(new Font("Arial", Font.BOLD, 12));
@@ -359,6 +459,10 @@ public class LaberintoDashboard extends JFrame {
             lblInfoConexion.setForeground(new Color(255, 100, 100));
             lblInfoConexion.setAlignmentX(Component.CENTER_ALIGNMENT);
             add(lblInfoConexion);
+        }
+        
+        public void actualizarNivelVisual(int nivel) {
+            lblNivelContador.setText("NIVEL " + nivel);
         }
         
         private void actualizarPuertosDisponibles() {
